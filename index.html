@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Chat App</title>
+  <style>
+    #messages {
+      height: 300px;
+      overflow-y: scroll;
+    }
+  </style>
+</head>
+<body>
+  <h1>Chat App</h1>
+
+  <div>
+    <label for="roomInput">Room:</label>
+    <input type="text" id="roomInput" placeholder="Enter room name" />
+    <input type="text" id="usernameInput" placeholder="Enter username" />
+    <button id="joinButton">Join</button>
+  </div>
+
+  <div id="chatContainer" style="display: none;">
+    <div id="messages"></div>
+
+    <form id="messageForm">
+      <input type="text" id="messageInput" placeholder="Type your message" />
+      <button type="submit">Send</button>
+    </form>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.1/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let currentRoom = '';
+
+    // Join a room
+    document.getElementById('joinButton').addEventListener('click', () => {
+      const roomInput = document.getElementById('roomInput');
+      const room = roomInput.value.trim();
+      if (room !== '') {
+        socket.emit('joinRoom', room);
+        currentRoom = room;
+        // roomInput.value = '';
+        document.getElementById('chatContainer').style.display = 'block';
+      }
+    });
+
+    // Listen for new messages from the server
+    socket.on('newMessage', (data) => {
+      const messageElement = document.createElement('div');
+      messageElement.textContent = `${data.sender}: ${data.text}`;
+      document.getElementById('messages').appendChild(messageElement);
+    });
+
+    // Listen for messages from the server
+    socket.on('messages', (data) => {
+      console.log('event listen messages: ', data);
+      const messagesElement = document.getElementById('messages');
+      messagesElement.innerHTML = '';
+
+      const usernameInput = document.getElementById('usernameInput');
+      const username = usernameInput.value.trim();
+
+      data.forEach((message) => {
+        let messageElement = document.createElement('div');
+        if (message.sender !== username) {
+          messageElement.style.paddingLeft = '50%';
+        }
+        messageElement.textContent = `${message.sender}:\n ${message.text}`;
+        messagesElement.appendChild(messageElement);
+      });
+    });
+
+    // Send a new message to the server
+    document.getElementById('messageForm').addEventListener('submit', (event) => {
+      event.preventDefault();
+      const input = document.getElementById('messageInput');
+      const message = input.value.trim();
+      const usernameInput = document.getElementById('usernameInput');
+      const username = usernameInput.value.trim();
+      if (message !== '') {
+        socket.emit('newMessage', { text: message, sender: username, room: currentRoom });
+        input.value = '';
+      }
+    });
+  </script>
+</body>
+</html>
