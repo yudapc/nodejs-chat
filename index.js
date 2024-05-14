@@ -16,6 +16,7 @@ const server = http.createServer(app);
 const PORT = process.env.PORT || 8080;
 
 const wss = new WebSocket.Server({ server });
+const rooms = new Map();
 
 // Connect to SQLite database
 const db = new sqlite3.Database("chat.db", (err) => {
@@ -36,7 +37,7 @@ db.run(`CREATE TABLE IF NOT EXISTS messages (
 
 const getMessagesByRoom = (room, callback) => {
   db.all("SELECT * FROM messages WHERE room = ?", [room], callback);
-}
+};
 
 const sendMessagesToCurrentClient = (room, ws) => {
   getMessagesByRoom(room, (err, rows) => {
@@ -46,21 +47,24 @@ const sendMessagesToCurrentClient = (room, ws) => {
       ws.send(JSON.stringify(rows));
     }
   });
-}
+};
 
 const sendMessagesToAllClients = (room, wss) => {
   getMessagesByRoom(room, (err, rows) => {
     if (err) {
       console.error("Error retrieving messages:", err);
     } else {
-      wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify(rows));
-        }
-      });
+      const clients = rooms.get(room);
+      if (clients) {
+        clients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(rows));
+          }
+        });
+      }
     }
   });
-}
+};
 
 wss.on("connection", function connection(ws) {
   console.log("WS connection arrived");
@@ -91,11 +95,22 @@ wss.on("connection", function connection(ws) {
     }
     if (event === "joinRoom") {
       const { room } = data;
+
+      // Add the client to the room
+      if (!rooms.has(room)) {
+        rooms.set(room, new Set());
+      }
+      rooms.get(room).add(ws);
+
+      // When a client leaves the room, remove them
+      ws.on("close", () => {
+        rooms.get(room).delete(ws);
+      });
+
       sendMessagesToCurrentClient(room, ws);
     }
   });
 });
-
 
 // Set up routes
 app.get("/", (req, res) => {
