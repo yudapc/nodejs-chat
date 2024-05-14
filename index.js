@@ -1,20 +1,28 @@
 // Import dependencies
-const express = require('express');
-const http = require('http');
-const socketIO = require('socket.io');
-const sqlite3 = require('sqlite3').verbose();
+const express = require("express");
+const http = require("http");
+const WebSocket = require("ws");
+const sqlite3 = require("sqlite3").verbose();
+const cors = require("cors");
 
 // Create an Express app
 const app = express();
+app.use(
+  cors({
+    origin: "*",
+  })
+);
 const server = http.createServer(app);
-const io = socketIO(server);
+const PORT = process.env.PORT || 8080;
+
+const wss = new WebSocket.Server({ server });
 
 // Connect to SQLite database
-const db = new sqlite3.Database('chat.db', (err) => {
+const db = new sqlite3.Database("chat.db", (err) => {
   if (err) {
-    console.error('Error connecting to database:', err);
+    console.error("Error connecting to database:", err);
   } else {
-    console.log('Connected to the database');
+    console.log("Connected to the database");
   }
 });
 
@@ -26,53 +34,75 @@ db.run(`CREATE TABLE IF NOT EXISTS messages (
   room TEXT NOT NULL
 )`);
 
-// Set up WebSocket connection
-io.on('connection', (socket) => {
-  console.log('A user connected');
+const getMessagesByRoom = (room, callback) => {
+  db.all("SELECT * FROM messages WHERE room = ?", [room], callback);
+}
 
-  // Listen for joining a room
-  socket.on('joinRoom', (room) => {
-    socket.join(room);
-    console.log(`User joined room: ${room}`);
+const sendMessagesToCurrentClient = (room, ws) => {
+  getMessagesByRoom(room, (err, rows) => {
+    if (err) {
+      console.error("Error retrieving messages:", err);
+    } else {
+      ws.send(JSON.stringify(rows));
+    }
+  });
+}
 
-    // Get all messages for the room from the database
-    db.all('SELECT * FROM messages WHERE room = ?', [room], (err, rows) => {
-        if (err) {
-          console.error('Error retrieving messages:', err);
-        } else {
-          // Emit the messages to the client
-          socket.emit('messages', rows);
+const sendMessagesToAllClients = (room, wss) => {
+  getMessagesByRoom(room, (err, rows) => {
+    if (err) {
+      console.error("Error retrieving messages:", err);
+    } else {
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify(rows));
         }
       });
+    }
   });
+}
 
-  // Listen for new messages from the client
-  socket.on('newMessage', (data) => {
-    const { text, sender, room } = data;
+wss.on("connection", function connection(ws) {
+  console.log("WS connection arrived");
 
-    // Insert the new message into the database
-    db.run('INSERT INTO messages (text, sender, room) VALUES (?, ?, ?)', [text, sender, room], (err) => {
-      if (err) {
-        console.error('Error saving message:', err);
-      } else {
-        // Broadcast the new message to all clients in the room
-        io.to(room).emit('newMessage', { text, sender });
-      }
-    });
-  });
+  ws.on("message", function incoming(message) {
+    console.log("received: %s", message);
+    const dataJson = JSON.parse(message);
+    const { event, data } = dataJson;
 
-  // Listen for disconnection
-  socket.on('disconnect', () => {
-    console.log('A user disconnected');
+    console.log("event: ", event);
+
+    if (event === "message") {
+      const { text, sender, room } = data;
+
+      // Insert the new message into the database
+      db.run(
+        "INSERT INTO messages (text, sender, room) VALUES (?, ?, ?)",
+        [text, sender, room],
+        (err) => {
+          if (err) {
+            console.error("Error saving message:", err);
+          } else {
+            // Broadcast the new message to all clients in the room
+            sendMessagesToAllClients(room, wss);
+          }
+        }
+      );
+    }
+    if (event === "joinRoom") {
+      const { room } = data;
+      sendMessagesToCurrentClient(room, ws);
+    }
   });
 });
 
+
 // Set up routes
-app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/index.html');
+app.get("/", (req, res) => {
+  res.sendFile(__dirname + "/index.html");
 });
 
 // Start the server
-server.listen(3000, () => {
-  console.log('Server is running on http://localhost:3000');
+server.listen(PORT, () => {
+  console.log(`Server is running on http://localhost:${PORT}`);
 });
